@@ -1,0 +1,234 @@
+---
+title: "CANDEV"
+output: html_document
+---
+
+## look at closure codes for difference between low vs medium priority tickets 
+## types of service issues 
+
+# read in data 
+```{r}
+incidentdf <- read.csv(file = '/Users/kevinpark/Downloads/drive-download-20220204T171629Z-001/INCIDENTS.csv')
+historydf <- read.csv(file = '/Users/kevinpark/Downloads/drive-download-20220204T171629Z-001/INCIDENT_HISTORY.csv')
+ownerdf <- read.csv(file = '/Users/kevinpark/Downloads/drive-download-20220204T171629Z-001/INCIDENT_OWNER_HISTORY.csv')
+
+# subset by priority 
+lowpri <- incidentdf %>%
+  filter(str_detect(PRIORITY, "Low"))
+medpri <- incidentdf %>%
+  filter(str_detect(PRIORITY, "Medium"))
+highpri <- incidentdf %>%
+  filter(str_detect(PRIORITY, "High"))
+
+priority <- list(incidentdf, lowpri, medpri, highpri, good, bad)
+namespriority <- c("incidentdf", "lowpri", "medpri", "highpri")
+names(priority) = namespriority
+
+
+
+
+
+midrange <- incidentdf %>%
+  group_by(ASSIGNED_GROUP, service) %>%
+  tally() %>%
+  filter(str_detect(service, "Midrange - Windows -X86")) %>%
+  left_join(incidentdfmeansgroup$incidentdf) %>%
+  filter(n > 1289)
+gcwan <- incidentdf %>%
+  group_by(ASSIGNED_GROUP, service) %>%
+  tally() %>%
+  filter(str_detect(service, "GC WAN")) %>%
+  left_join(incidentdfmeansgroup$incidentdf) %>%
+  filter(n >1917)
+other <- incidentdf %>%
+  group_by(ASSIGNED_GROUP, service) %>%
+  tally() %>%
+  filter(str_detect(service, "Other - Service Management")) %>%
+  left_join(incidentdfmeansgroup$incidentdf)  %>%
+  filter(n >554)
+View(gcwan)
+View(other)
+View(midrange)
+
+
+# prop of types of services by number of incidents 
+prop <- incidentdfmeansservice$incidentdf 
+
+sum(prop$`no. of incidents`)
+prop$prop <- prop$`no. of incidents`/226296
+prop <- prop %>%
+    mutate(across(where(is.numeric), ~ round(., 3))) %>%
+  filter(prop > 0.028)
+
+View(prop)
+sum(prop$prop)
+```
+
+
+# unfinished comparison, compare assigned_groups by proportion of true false of meeting service target between low med high priority tickets
+```{r}
+lowpri <- incidentdf %>%
+  filter(str_detect(PRIORITY, "Low")) %>%
+  filter(str_detect(service, "Midrange - Windows -X86")) %>%
+  group_by(ASSIGNED_GROUP) %>% 
+
+  
+midrange2 <- incidentdf %>%
+  group_by(ASSIGNED_GROUP, PRIORITY) %>%
+  tally() %>%
+  filter(str_detect(ASSIGNED_GROUP, "DC000236")) 
+View(lowpri)
+  
+```
+
+
+# Is there a correlation between the number of tickets associated with a particular assigned group, organization or service and the time it takes to restore service? service 
+## mean and median actual comnpletion hours by SERVICE
+```{r}
+avehourservice <- function(x){
+table1 <- x %>%
+  group_by(service) %>%
+  tally()
+meanhours <- x %>%
+  group_by(service) %>%
+  select(service, ACTUAL_COMPLETION_HRS) %>%
+  mutate_at(vars(ACTUAL_COMPLETION_HRS), ~replace_na(., 0)) %>%
+    summarise_each(funs("mean days" = mean)) 
+medianhours <- x %>%
+    group_by(service) %>%
+    select(service, ACTUAL_COMPLETION_HRS) %>%
+    mutate_at(vars(ACTUAL_COMPLETION_HRS), ~replace_na(., 0)) %>%
+    summarise_each(funs("median days" = median)) 
+incidentdfmeans <- table1 %>%
+  left_join(meanhours) %>%
+  left_join(medianhours) %>%  
+  rename("no. of incidents"= "n") 
+
+
+return(incidentdfmeans)
+}
+
+#incidentdfmeans$`mean days` <- lapply(incidentdfmeans$`mean days` ,function(x) x /24)
+#incidentdfmeans$`median days` <- lapply(incidentdfmeans$`median days` ,function(x) x /24)
+
+
+incidentdfmeansservice <- lapply(priority, avehourservice)
+View(incidentdfmeansservice$incidentdf)
+
+
+```
+
+
+## mean and median actual comnpletion hours by ORGANIZATION
+```{r}
+avehoursorg <- function(x){
+table1 <- x %>%
+  group_by(org_id) %>%
+  tally()
+meanhours <- x %>%
+  group_by(org_id) %>%
+  select(org_id, ACTUAL_COMPLETION_HRS) %>%
+  mutate_at(vars(ACTUAL_COMPLETION_HRS), ~replace_na(., 0)) %>%
+    summarise_each(funs("mean hours" = mean)) 
+medianhours <- x %>%
+    group_by(org_id) %>%
+    select(org_id, ACTUAL_COMPLETION_HRS) %>%
+    mutate_at(vars(ACTUAL_COMPLETION_HRS), ~replace_na(., 0)) %>%
+    summarise_each(funs("median" = median)) 
+incidentdfmeans <- table1 %>%
+  left_join(meanhours) %>%
+  left_join(medianhours) %>%
+  mutate(across(where(is.numeric), ~ round(., 1))) %>%
+  rename("no. of incidents"= "n") %>%
+return(incidentdfmeans)
+}
+
+incidentdfmeansorg <- lapply(priority, avehoursorg)
+
+View(incidentdfmeansorg$incidentdf)
+
+```
+
+## mean and median actual comnpletion hours by ASSIGNED GROUP
+```{r}
+avehoursgroup <- function(x){
+table1 <- x %>%
+  group_by(ASSIGNED_GROUP) %>%
+  tally()
+meanhours <- x %>%
+  group_by(ASSIGNED_GROUP) %>%
+  select(ASSIGNED_GROUP, ACTUAL_COMPLETION_HRS) %>%
+  mutate_at(vars(ACTUAL_COMPLETION_HRS), ~replace_na(., 0)) %>%
+    summarise_each(funs("mean hours" = mean)) 
+medianhours <- x %>%
+    group_by(ASSIGNED_GROUP) %>%
+    select(ASSIGNED_GROUP, ACTUAL_COMPLETION_HRS) %>%
+    mutate_at(vars(ACTUAL_COMPLETION_HRS), ~replace_na(., 0)) %>%
+    summarise_each(funs("median hours" = median)) 
+incidentdfmeans <- table1 %>%
+  left_join(meanhours) %>%
+  left_join(medianhours) %>%
+  mutate(across(where(is.numeric), ~ round(., 1))) %>%
+  rename("no. of incidents"= "n") %>%
+return(incidentdfmeans)
+}
+
+incidentdfmeansgroup <- lapply(priority, avehoursgroup)
+View(incidentdfmeansgroup$incidentdf)
+View(incidentdfmeansgroup$lowpri)
+View(incidentdfmeansgroup$medpri)
+View(incidentdfmeansgroup$highpri)
+)
+
+
+
+```
+
+# Average time that incidents spend in a particular status. convert to days 
+```{r}
+# mean hours + number of incidents 
+meanhourstatus <- function(x){
+
+table1 <- x %>%
+  group_by(STATUS) %>%
+  tally()
+meanhours <- x %>%
+  group_by(STATUS) %>%
+  mutate_at(vars(TIME_IN_STATUS_HRS), ~replace_na(., 0)) %>%
+  summarise_each(funs("mean hours" = mean)) %>%
+    select(-c(2,3))
+medianhours <- x %>%
+    group_by(STATUS) %>%
+    select(STATUS, TIME_IN_STATUS_HRS) %>%
+    mutate_at(vars(TIME_IN_STATUS_HRS), ~replace_na(., 0)) %>%
+    summarise_each(funs("median hours" = median))
+historydfmeans <- table1 %>%
+  left_join(meanhours) %>%
+  left_join(medianhours) %>%
+  mutate(across(where(is.numeric), ~ round(., 1))) %>%
+  rename("no. of incidents"= "n") %>%
+  rename("mean hours"= "TIME_IN_STATUS_HRS_mean hours")
+
+return(historydfmeans)
+
+}
+ 
+statushourmeans <- meanhourstatus(historydf)
+View(statushourmeans)
+
+
+
+
+```
+
+# export to excel
+```{r}
+list_of_datasets <- list("assigned groups" = incidentdfmeansgroup$incidentdf, "org_id" = incidentdfmeansorg$incidentdf, "statushours" = statushourmeans, "service" = prop, "midrange" = midrange, "gcwan" = gcwan, "other" = other)
+write.xlsx(list_of_datasets, file = "candev.xlsx")
+```
+
+
+
+
+
+
