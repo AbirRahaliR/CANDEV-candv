@@ -1,0 +1,213 @@
+---
+title: "CANDEV Data Challenge"
+author: "Li Ji"
+date: "04/02/2022"
+output:
+  html_document: 
+    code_folding: hide
+---
+
+Get access to most of the packages that I will use within this RMD file.
+
+```{r}
+pacman::p_load(rio, mice, psych, DT, lattice, sjmisc, sjPlot, captioner) # pacman installs packages 
+```  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Read the data of INCIDENTS.
+
+```{r }
+INCIDENTS <- read.csv("C:/Users/ASUSA/Desktop/CANDEV Data Challenge/SSC dataset/INCIDENTS.csv")
+head(INCIDENTS)
+describe(INCIDENTS)
+```
+
+# Data Cleaning: Missing Value
+
+Have an understanding of the missing values in this dataset.
+
+```{r}
+xray::anomalies(INCIDENTS) 
+```
+
+For better view of the results for the distribution of missing values.
+
+```{r}
+pacman::p_load(inspectdf)
+INCIDENTS[, c(2:20)] %>% inspect_na %>% show_plot
+```
+
+Delete the columns with 100% and 99.5% missing values.
+
+```{r}
+library(tidyverse)
+INCIDENTS1 <- select(INCIDENTS, -12, -18)
+describe(INCIDENTS1)
+xray::anomalies(INCIDENTS1)
+```
+
+Delete the rows with missing values accounting for 0.3%, 0.4% and 0.5%, which are pretty small percentages and generally won't affect the results.
+
+```{r}
+INCIDENTS2 <- na.omit(INCIDENTS1)
+describe(INCIDENTS2)
+xray::anomalies(INCIDENTS2)
+```
+
+Have an overview of the cleaned dataset.
+
+```{r}
+head(INCIDENTS2, 30)
+```
+
+# Mean time to restore service (MTRS)
+
+Getting the MTRS to see if there are particular services that are taking longer on average to be restored. Will based on the time of BUSINESS_COMPLETION_HRS.
+
+## Revert BUSINESS_COMPLETION_HRS to Days
+
+```{r}
+unique(INCIDENTS2$PRIORITY)
+```
+Based on definition, to convert hours to days, I divide BUSINESS_COMPLETION_HRS by 24 for high incidents and by 10 for medium and low.
+
+```{r}
+INCIDENTS2$BUSINESS_COMPLETION_HRS = ifelse(INCIDENTS2$PRIORITY == "High", INCIDENTS2$BUSINESS_COMPLETION_HRS/24, INCIDENTS2$BUSINESS_COMPLETION_HRS/10 )
+head(INCIDENTS2, 30)
+```
+
+```{r}
+describe(INCIDENTS2$BUSINESS_COMPLETION_HRS)
+```
+
+From now on, MTRS is all based on days. Below is the dataset for MTRS according to different Service_Type.
+
+```{r}
+MTRS_by_type <- aggregate(INCIDENTS2$BUSINESS_COMPLETION_HRS, list(INCIDENTS2$service), mean )
+names(MTRS_by_type) <- c("Service_Type", "MTRS")
+MTRS_by_type
+```
+
+For better view, I data in descending order for MTRS to find the  services that are taking longer on average to be restored. 
+
+```{r  }
+MTRS_by_type[order(MTRS_by_type$MTRS, decreasing = T), ] %>%  datatable( rownames = TRUE, filter="top", class = 'cell-border stripe', options = list(scrollX=T)) %>%  formatRound(columns=c(2), digits=2 ) 
+```  
+
+As we can see from above chart, IT Continuity Support Service and Solutions Integration Service (SIS) required extremely longer time on average to be restored, with 421.91 and 117.25 days respectively.
+
+
+# Correlation between Two Variables
+ 
+Now, I try to find the possible correlation between the number of times an incident is reassigned and how long it takes to restore.   
+
+Read the data of INCIDENT_OWNER_HIS to see the history of ownership of these incidents.
+
+```{r }
+INCIDENT_OWNER_HIS <- read.csv("C:/Users/ASUSA/Desktop/CANDEV Data Challenge/SSC dataset/INCIDENT_OWNER_HISTORY.csv")
+head(INCIDENT_OWNER_HIS,40)
+```
+
+Group the assigned times based on ticket number to see how many times these tickets were assigned.
+
+```{r}
+group_by_ticket <- aggregate(
+  x= INCIDENT_OWNER_HIS$assigned_group,
+  by = list(INCIDENT_OWNER_HIS$ticket_nmbr),
+  FUN = function(x) length(unique(x)))
+names(group_by_ticket) <- c("ticket_nmbr", "assigned_times")
+head(group_by_ticket)
+```
+Have an idea about the max and min for the assigned times.
+
+```{r}
+max(group_by_ticket$assigned_group_nmbr)
+min(group_by_ticket$assigned_group_nmbr)
+```
+
+Group the Business Completion days by ticket number and to see how many days it took to get these incidents restored.
+
+```{r}
+restore_days_by_ticket <- INCIDENTS2[, c("TICKET_NMBR", "BUSINESS_COMPLETION_HRS")]
+names(restore_days_by_ticket) <- c("ticket_nmbr", "restore_days")
+restore_days_by_ticket
+```
+
+Combine the data for Business Completion days and assigned times based on ticket number.
+
+```{r}
+times_days<- merge(group_by_ticket,restore_days_by_ticket,by="ticket_nmbr")
+times_days
+```
+
+There are some extreme outliers, which will affect the results for finding the correlation, so I drop the data with restore_days greater than 600 (just seven rows).
+
+```{r}
+times_days_extr <- subset(times_days, times_days$restore_days > 600 )
+times_days_extr
+```
+
+```{r}
+times_days_new <- subset(times_days, times_days$restore_days <= 600 ) 
+times_days_new
+```
+
+Double comfirm the missing values and its distribution.
+
+```{r}
+xray::anomalies(times_days_new)
+describe(times_days_new)
+```
+
+Visualization with ggcorrplot.
+
+```{r}
+#install.packages("ggcorrplot")
+library(ggplot2)
+library(ggcorrplot)
+
+library("ggpubr")
+ggscatter(times_days_new, x = "assigned_times", y = "restore_days", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "assigned_times", ylab = "restore_days")
+```
+
+Visualization with psych package.
+
+```{r}
+library(psych)
+pairs.panels(times_days_new[, 2:3], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE # show correlation ellipses
+             )
+```
+
+Visualization of scatter plot.
+
+```{r}
+attach(times_days_new)
+plot(assigned_times, restore_days, main="Scatterplot",
+   xlab="assigned_times", ylab="restore_days", pch=19)
+```
+
+```{r}
+library(car)
+#scatterplot(restore_days ~ assigned_times, data=times_days_new,
+   #xlab="assigned_times", ylab="restore_days",
+   #main="Scatter Plot",
+   #labels=row.names(times_days_new$assigned_times))
+```
+
+Based on the charts shown above, we can see that there is a slightly positive correlation between the two variables, which means that it normally takes longer time to restore incidents if they are assigned multiple time to different departments.
+
+
+
+
+
+

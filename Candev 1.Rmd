@@ -1,0 +1,676 @@
+---
+title: "Candev 1"
+output: html_document
+---
+
+```{r}
+Incidents <- read.csv("INCIDENTS.csv",header = TRUE)
+Inc_owner_hist <- read.csv("INCIDENT_OWNER_HISTORY.csv", header = TRUE)
+```
+
+
+```{r}
+Incidents
+```
+
+
+```{r}
+# Merging the INCIDENTS and INCIDENT_OWNER_HISTORY tables 
+bigframe <- merge(Inc_owner_hist,Incidents,by="ticket_nmbr")
+```
+
+
+```{r}
+# Storing the resulting tables in a csv file
+write.csv(bigframe,"bigframe.csv", row.names = FALSE)
+```
+
+
+```{r}
+# Using Excel, I added 7 new columns to the bigframe table to facilitate analysis. These column give information about wether or not there's reassignment between services and wether or not the business completion hours exceeded the target hours for a given incident.
+bigframe <- read.csv("bigframe_final.csv",header = TRUE)
+```
+
+```{r}
+colnames(bigframe)[27:32] <- c("Ass_to_parent","Ass_to_service","Ass_to_group","Ass_from_parent","Ass_from_service","Ass_from_group")
+bigframe
+```
+
+
+```{r}
+# A package to use SQL on R dataframes
+library(sqldf)
+```
+
+
+I) Looking for correlation
+
+Is there a correlation between the business completion time and :
+- the number of reassignments?
+- the parent service?
+- the service?
+- the assigned group?
+- the client organization?
+- the nature of the incident?
+- the external system?
+
+1) Business completion hours and number of reassignments
+
+```{r}
+par_reas_by_inc = sqldf("SELECT frame1.ticket_nmbr,frame1.mycount,frame2.myaverage 
+                     FROM
+                     (SELECT ticket_nmbr, COUNT(Ass_to_parent) AS mycount FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY ticket_nmbr) AS frame1,
+                     (SELECT ticket_nmbr, AVG(BUSINESS_COMPLETION_HRS) AS myaverage FROM bigframe GROUP BY ticket_nmbr ) AS frame2
+                     WHERE frame1.ticket_nmbr = frame2.ticket_nmbr
+                     GROUP BY frame1.ticket_nmbr
+                     ")
+par_reas_by_inc
+plot(as.vector(as.matrix(par_reas_by_inc[3])),as.vector(as.matrix(par_reas_by_inc[2])))
+abline(lm(mycount~myaverage,par_reas_by_inc),col='red')
+
+
+serv_reas_by_inc = sqldf("SELECT frame1.ticket_nmbr,frame1.mycount,frame2.myaverage 
+                     FROM
+                     (SELECT ticket_nmbr, COUNT(Ass_to_service) AS mycount FROM bigframe WHERE Ass_to_service = TRUE GROUP BY ticket_nmbr) AS frame1,
+                     (SELECT ticket_nmbr, AVG(BUSINESS_COMPLETION_HRS) AS myaverage FROM bigframe GROUP BY ticket_nmbr ) AS frame2
+                     WHERE frame1.ticket_nmbr = frame2.ticket_nmbr
+                     GROUP BY frame1.ticket_nmbr
+                     ")
+serv_reas_by_inc
+plot(as.vector(as.matrix(serv_reas_by_inc[3])),as.vector(as.matrix(serv_reas_by_inc[2])))
+abline(lm(mycount~myaverage,serv_reas_by_inc),col='red')
+
+
+group_reas_by_inc = sqldf("SELECT frame1.ticket_nmbr,frame1.mycount,frame2.myaverage 
+                     FROM
+                     (SELECT ticket_nmbr, COUNT(Ass_to_group) AS mycount FROM bigframe WHERE Ass_to_group = TRUE GROUP BY ticket_nmbr) AS frame1,
+                     (SELECT ticket_nmbr, AVG(BUSINESS_COMPLETION_HRS) AS myaverage FROM bigframe GROUP BY ticket_nmbr ) AS frame2
+                     WHERE frame1.ticket_nmbr = frame2.ticket_nmbr
+                     GROUP BY frame1.ticket_nmbr
+                     ")
+group_reas_by_inc
+plot(as.vector(as.matrix(group_reas_by_inc[3])),as.vector(as.matrix(group_reas_by_inc[2])))
+abline(lm(mycount~myaverage,group_reas_by_inc),col='red')
+```
+
+We have a slightly positive slope, so there's a positive correlation between the business completion hours and the number of reassignments
+
+
+
+2) missed deadlines and parent service, service, assigned group
+```{r}
+parent_missed = sqldf("SELECT frame1.PARENT_SERVICE, frame1.count1*1.0/frame2.count2  AS proportion, frame2.count2 as population
+                      FROM
+                      (SELECT PARENT_SERVICE, COUNT(DISTINCT ticket_nmbr ) AS count1 FROM bigframe WHERE Miss_target = TRUE GROUP BY PARENT_SERVICE) AS frame1,
+                      (SELECT PARENT_SERVICE, COUNT(DISTINCT ticket_nmbr ) AS count2 FROM bigframe GROUP BY PARENT_SERVICE) AS frame2
+                      WHERE frame1.PARENT_SERVICE = frame2.PARENT_SERVICE AND frame2.count2 >30
+                      GROUP BY frame1.PARENT_SERVICE
+                      ORDER BY proportion DESC")
+
+service_missed = sqldf("SELECT frame1.service, frame1.count1*1.0/frame2.count2  AS proportion, frame2.count2 as population
+                      FROM
+                      (SELECT service, COUNT(DISTINCT ticket_nmbr ) AS count1 FROM bigframe WHERE Miss_target = TRUE GROUP BY service) AS frame1,
+                      (SELECT service, COUNT(DISTINCT ticket_nmbr ) AS count2 FROM bigframe GROUP BY service) AS frame2
+                      WHERE frame1.service = frame2.service AND frame2.count2 >30
+                      GROUP BY frame1.service
+                      ORDER BY proportion DESC")
+
+
+group_missed = sqldf("SELECT frame1.assigned_group, frame1.count1*1.0/frame2.count2  AS proportion, frame2.count2 as population
+                      FROM
+                      (SELECT assigned_group, COUNT(DISTINCT ticket_nmbr ) AS count1 FROM bigframe WHERE Miss_target = TRUE GROUP BY assigned_group) AS frame1,
+                      (SELECT assigned_group, COUNT(DISTINCT ticket_nmbr ) AS count2 FROM bigframe GROUP BY assigned_group) AS frame2
+                      WHERE frame1.assigned_group = frame2.assigned_group AND frame2.count2 >30
+                      GROUP BY frame1.assigned_group
+                      ORDER BY proportion DESC")
+
+
+barplot(height = as.matrix( parent_missed[2])[1:25], names.arg = as.vector(as.matrix(parent_missed[1]))[1:25],main = "Proportion of missed deadline by parent service",las = 2)
+barplot(height = as.matrix( service_missed[2])[1:25], names.arg = as.vector(as.matrix(service_missed[1]))[1:25],main = "Proportion of missed deadline by service",las = 2)
+barplot(height = as.matrix( group_missed[2])[1:25], names.arg = as.vector(as.matrix(group_missed[1]))[1:25],main = "Proportion of missed deadline by assigned group",las = 2)
+
+
+
+parent_missed
+service_missed
+group_missed
+```
+
+
+For the services that have a high proportion of missed deadlines, is it related to the service itself, or there are other reasons ?
+I'll take two of the worst cases and examine them: Mobile Devices and Storage for services, Fixed line and Secure Remote Access for parent services
+
+```{r}
+myframe1 = sqldf("SELECT * FROM bigframe WHERE PARENT_SERVICE = 'Fixed Line'")
+myframe2 = sqldf("SELECT * FROM bigframe WHERE PARENT_SERVICE = 'Secure Remote Access'")
+myframe3 = sqldf("SELECT * FROM bigframe WHERE service = 'Mobile Devices'")
+myframe4 = sqldf("SELECT * FROM bigframe WHERE service = 'Storage'")
+```
+
+
+
+3) Client organization and missed deadlines
+```{r}
+org_missed = sqldf("SELECT frame1.org_ID, frame1.count1*1.0/frame2.count2  AS proportion, frame2.count2 as population
+                      FROM
+                      (SELECT org_ID, COUNT(DISTINCT ticket_nmbr ) AS count1 FROM bigframe WHERE Miss_target = TRUE GROUP BY org_ID) AS frame1,
+                      (SELECT org_ID, COUNT(DISTINCT ticket_nmbr ) AS count2 FROM bigframe GROUP BY org_ID) AS frame2
+                      WHERE frame1.org_ID = frame2.org_ID AND frame2.count2 >30
+                      GROUP BY frame1.org_ID
+                      ORDER BY proportion DESC")
+
+org_missed
+barplot(height = as.matrix( org_missed[2])[1:25], names.arg = as.vector(as.matrix(org_missed[1]))[1:25],main = "Proportion of missed deadline by organization",las = 2)
+
+```
+
+For the organizations that have a high proportion of missed deadlines, is it related to the service itself, or there are other reasons ?
+I'll take two of the worst cases and examine them: 1057 and 835
+
+```{r}
+myframe5 = sqldf("SELECT * FROM bigframe WHERE org_ID = 1057")
+myframe6 = sqldf("SELECT * FROM bigframe WHERE org_ID = 835")
+```
+
+
+4) Nature of the incident
+
+
+```{r}
+nature_missed = sqldf("SELECT frame1.Nature, frame1.count1*1.0/frame2.count2  AS proportion, frame2.count2 as population
+                      FROM
+                      (SELECT Nature, COUNT(DISTINCT ticket_nmbr ) AS count1 FROM bigframe WHERE Miss_target = TRUE GROUP BY Nature) AS frame1,
+                      (SELECT Nature, COUNT(DISTINCT ticket_nmbr ) AS count2 FROM bigframe GROUP BY Nature) AS frame2
+                      WHERE frame1.Nature = frame2.Nature AND frame2.count2 >30
+                      GROUP BY frame1.Nature
+                      ORDER BY proportion DESC")
+
+nature_missed
+barplot(height = as.matrix( nature_missed[2])[1:25], names.arg = as.vector(as.matrix(nature_missed[1]))[1:25],main = "Proportion of missed deadline by Incident type",las = 2)
+```
+
+For the incident types that have a high proportion of missed deadlines, is it related to the service itself, or there are other reasons ?
+I'll take two of the worst cases and examine them: IT Issue \\ Telecomms \\ Office Phone-Office Phone Issue and IT Request-IT Request
+
+```{r}
+myframe7 = sqldf("SELECT * FROM bigframe WHERE Nature = 'IT Issue \\ Telecomms \\ Office Phone-Office Phone Issue'")
+myframe8 = sqldf("SELECT * FROM bigframe WHERE Nature = 'IT Request-IT Request'")
+```
+
+
+5) External system
+
+```{r}
+system_missed = sqldf("SELECT frame1.EXTERNAL_SYSTEM, frame1.count1*1.0/frame2.count2  AS proportion, frame2.count2 as population
+                      FROM
+                      (SELECT EXTERNAL_SYSTEM, COUNT(DISTINCT ticket_nmbr ) AS count1 FROM bigframe WHERE Miss_target = TRUE GROUP BY EXTERNAL_SYSTEM) AS frame1,
+                      (SELECT EXTERNAL_SYSTEM, COUNT(DISTINCT ticket_nmbr ) AS count2 FROM bigframe GROUP BY EXTERNAL_SYSTEM) AS frame2
+                      WHERE frame1.EXTERNAL_SYSTEM = frame2.EXTERNAL_SYSTEM AND frame2.count2 >30
+                      GROUP BY frame1.EXTERNAL_SYSTEM
+                      ORDER BY proportion DESC")
+
+system_missed
+barplot(height = as.matrix( system_missed[2])[1:12], names.arg = as.vector(as.matrix(system_missed[1]))[1:12],main = "Proportion of missed deadline by External system",las = 2)
+```
+For the External systems that have a high proportion of missed deadlines, is it related to the service itself, or there are other reasons ?
+I'll take two of the worst cases and examine them: CREATEDFROMSR,EXTERNALSERVICEDESK
+
+```{r}
+myframe9 = sqldf("SELECT * FROM bigframe WHERE EXTERNAL_SYSTEM = 'CREATEDFROMSR'")
+myframe10 = sqldf("SELECT * FROM bigframe WHERE EXTERNAL_SYSTEM = 'EXTERNALSERVICEDESK'")
+```
+
+
+
+
+
+
+Within each category of factor, I'll check the influence of the other factors, i.e for each category:
+-What's the influence of the number of reassignments on whether or not the target will be missed?
+-What's the influence of the service on whether or not the target will be missed?
+-What's the influence of the organization on whether or not the target will be missed?
+-What's the influence of the external system on whether or not the target will be missed?
+-What's the influence of nature of the incident on whether or not the target will be missed?
+
+```{r}
+myframelist = list(myframe1,myframe2,myframe3,myframe4,myframe5,myframe6,myframe7,myframe8,myframe9,myframe10)
+```
+
+
+II) Looking for causality
+
+1) Number of reassignments
+
+```{r}
+
+```
+
+
+2) Services and parent services
+
+```{r}
+# Parent service
+for(i in 1:10){
+  bigframe = myframelist[[i]]
+  
+  parent_missed = sqldf("SELECT frame1.PARENT_SERVICE, frame1.count1*1.0/frame2.count2  AS proportion, frame2.count2 as population
+                      FROM
+                      (SELECT PARENT_SERVICE, COUNT(DISTINCT ticket_nmbr ) AS count1 FROM bigframe WHERE Miss_target = TRUE GROUP BY PARENT_SERVICE) AS frame1,
+                      (SELECT PARENT_SERVICE, COUNT(DISTINCT ticket_nmbr ) AS count2 FROM bigframe GROUP BY PARENT_SERVICE) AS frame2
+                      WHERE frame1.PARENT_SERVICE = frame2.PARENT_SERVICE AND frame2.count2 >30
+                      GROUP BY frame1.PARENT_SERVICE
+                      ORDER BY proportion DESC")
+  barplot(height = as.matrix( parent_missed[2])[1:25], names.arg = as.vector(as.matrix(parent_missed[1]))[1:25],main = "Proportion of missed deadline by parent service",las = 2)
+
+}
+
+# Service
+
+for(i in 1:10)
+  {
+  bigframe = myframelist[[i]]
+  
+  service_missed = sqldf("SELECT frame1.service, frame1.count1*1.0/frame2.count2  AS proportion, frame2.count2 as population
+                      FROM
+                      (SELECT service, COUNT(DISTINCT ticket_nmbr ) AS count1 FROM bigframe WHERE Miss_target = TRUE GROUP BY service) AS frame1,
+                      (SELECT service, COUNT(DISTINCT ticket_nmbr ) AS count2 FROM bigframe GROUP BY service) AS frame2
+                      WHERE frame1.service = frame2.service AND frame2.count2 >30
+                      GROUP BY frame1.service
+                      ORDER BY proportion DESC")
+  barplot(height = as.matrix( service_missed[2])[1:25], names.arg = as.vector(as.matrix(service_missed[1]))[1:25],main = "Proportion of missed deadline by service",las = 2)
+  
+}
+```
+
+
+3) Organization
+
+```{r}
+
+```
+
+
+4) Nature of the incident
+
+```{r}
+
+```
+
+
+5) External systems
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Selecting only the rows where the business completion hours exceed the target completion hours
+#bigframe <- sqldf("SELECT * FROM bigframe WHERE Miss_target = TRUE")
+#bigframe
+
+#data1 <- sqldf("SELECT * FROM bigframe WHERE ticket_nmbr = 'IN10028612'")
+#data1
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+#Number of reassignment by category
+
+to_parent = sqldf("SELECT PARENT_SERVICE, COUNT(Ass_to_parent) FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY PARENT_SERVICE ORDER BY COUNT(Ass_to_parent) DESC")
+from_parent = sqldf("SELECT PARENT_SERVICE, COUNT(Ass_from_parent) FROM bigframe WHERE Ass_from_parent = 'TRUE' GROUP BY PARENT_SERVICE ORDER BY COUNT(Ass_from_parent) DESC")
+
+to_service = sqldf("SELECT service, COUNT(Ass_to_service) FROM bigframe WHERE Ass_to_service = TRUE GROUP BY service ORDER BY COUNT(Ass_to_service) DESC")
+from_service = sqldf("SELECT service, COUNT(Ass_from_service) FROM bigframe WHERE Ass_from_service = 'TRUE' GROUP BY service ORDER BY COUNT(Ass_from_service) DESC")
+
+to_group = sqldf("SELECT assigned_group, COUNT(Ass_to_group) FROM bigframe WHERE Ass_to_group = TRUE GROUP BY assigned_group ORDER BY COUNT(Ass_to_group) DESC")
+from_group = sqldf("SELECT assigned_group, COUNT(Ass_from_group) FROM bigframe WHERE Ass_from_group = 'TRUE' GROUP BY assigned_group ORDER BY COUNT(Ass_from_group) DESC")
+
+parent_reass_by_org = sqldf("SELECT org_id, COUNT(Ass_to_parent) FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY org_id ORDER BY COUNT(Ass_to_parent) DESC")
+service_reass_by_org = sqldf("SELECT org_id, COUNT(Ass_to_service) FROM bigframe WHERE Ass_to_service = TRUE GROUP BY org_id ORDER BY COUNT(Ass_to_service) DESC")
+group_reass_by_org = sqldf("SELECT org_id, COUNT(Ass_to_group) FROM bigframe WHERE Ass_to_group = TRUE GROUP BY org_id ORDER BY COUNT(Ass_to_group) DESC")
+
+parent_reass_by_classtr = sqldf("SELECT class_structure, COUNT(Ass_to_parent) FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY class_structure ORDER BY COUNT(Ass_to_parent) DESC")
+service_reass_by_classtr = sqldf("SELECT class_structure, COUNT(Ass_to_service) FROM bigframe WHERE Ass_to_service = TRUE GROUP BY class_structure ORDER BY COUNT(Ass_to_service) DESC")
+group_reass_by_classtr = sqldf("SELECT class_structure, COUNT(Ass_to_group) FROM bigframe WHERE Ass_to_group = TRUE GROUP BY class_structure ORDER BY COUNT(Ass_to_group) DESC")
+
+parent_reass_by_source = sqldf("SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_parent) FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY EXTERNAL_SYSTEM ORDER BY COUNT(Ass_to_parent) DESC")
+service_reass_by_source = sqldf("SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_service) FROM bigframe WHERE Ass_to_service = TRUE GROUP BY EXTERNAL_SYSTEM ORDER BY COUNT(Ass_to_service) DESC")
+group_reass_by_source = sqldf("SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_group) FROM bigframe WHERE Ass_to_group = TRUE GROUP BY EXTERNAL_SYSTEM ORDER BY COUNT(Ass_to_group) DESC")
+
+
+
+to_parent
+from_parent
+
+to_service
+from_service
+
+to_group
+from_group
+
+parent_reass_by_org
+service_reass_by_org
+group_reass_by_org
+
+parent_reass_by_classtr
+service_reass_by_classtr
+group_reass_by_classtr
+
+parent_reass_by_source
+service_reass_by_source
+group_reass_by_source
+
+
+```
+
+
+
+```{r}
+
+# Bar plots for Number of reassignment by category
+
+len_to_parent = nrow(to_parent)
+barplot(height = as.matrix( to_parent[2])[1:len_to_parent], names.arg = as.vector(as.matrix(to_parent[1]))[1:len_to_parent],main = "Total number of reassignements to parent service",las = 2)
+len_from_parent = nrow(from_parent)
+barplot(height = as.matrix( from_parent[2])[1:len_from_parent], names.arg = as.vector(as.matrix(from_parent[1]))[1:len_from_parent],main = "Total number of reassignements from parent service",las = 2)
+
+len_to_service = nrow(to_service)
+barplot(height = as.matrix( to_service[2])[1:25], names.arg = as.vector(as.matrix(to_service[1]))[1:25],main = "Total number of reassignements to service",las = 2)
+len_from_service = nrow(from_service)
+barplot(height = as.matrix( from_service[2])[1:25], names.arg = as.vector(as.matrix(from_service[1]))[1:25],main = "Total number of reassignements from service",las = 2)
+
+len_to_group = nrow(to_group)
+barplot(height = as.matrix( to_group[2])[1:25], names.arg = as.vector(as.matrix(to_group[1]))[1:25],main = "Total number of reassignements to assigned group",las = 2)
+len_from_group = nrow(from_group)
+barplot(height = as.matrix( from_group[2])[1:25], names.arg = as.vector(as.matrix(from_group[1]))[1:25],main = "Total number of reassignements from assigned group",las = 2)
+
+len_by_org = nrow(parent_reass_by_org)
+barplot(height = as.matrix( parent_reass_by_org[2])[1:min(c(len_by_org,25))], names.arg = as.vector(as.matrix(parent_reass_by_org[1]))[1:min(c(len_by_org,25))],main = "Total number of parent service reassignements by organization",las = 2)
+len_by_org = nrow(service_reass_by_org)
+barplot(height = as.matrix( service_reass_by_org[2])[1:min(c(len_by_org,25))], names.arg = as.vector(as.matrix(service_reass_by_org[1]))[1:min(c(len_by_org,25))],main = "Total number of service reassignements by organization",las = 2)
+len_by_org = nrow(group_reass_by_org)
+barplot(height = as.matrix( group_reass_by_org[2])[1:min(c(len_by_org,25))], names.arg = as.vector(as.matrix(group_reass_by_org[1]))[1:min(c(len_by_org,25))],main = "Total number of assigned group reassignements by organization",las = 2)
+
+len_by_source = nrow(parent_reass_by_source)
+barplot(height = as.matrix( parent_reass_by_source[2])[1:min(c(len_by_source,25))], names.arg = as.vector(as.matrix(parent_reass_by_source[1]))[1:min(c(len_by_source,25))],main = "Total number of parent service reassignements by external system",las = 2)
+len_by_source = nrow(service_reass_by_source)
+barplot(height = as.matrix( service_reass_by_source[2])[1:min(c(len_by_source,25))], names.arg = as.vector(as.matrix(service_reass_by_source[1]))[1:min(c(len_by_source,25))],main = "Total number of service reassignements by external system",las = 2)
+len_by_source = nrow(group_reass_by_source)
+barplot(height = as.matrix( group_reass_by_source[2])[1:min(c(len_by_source,25))], names.arg = as.vector(as.matrix(group_reass_by_source[1]))[1:min(c(len_by_source,25))],main = "Total number of assigned group reassignements by external system",las = 2)
+
+
+```
+
+The above tables and plots are not very informative since different categories receive different numbers of incident and therefore we can't do a fair comparison.
+Instead we'll examine the averages (i.e we divide by the number of incidents in the category).
+
+
+```{r}
+to_parent_avg = sqldf("SELECT frame1.PARENT_SERVICE,frame1.mycount*1.0/frame2.mycount AS avg_to_parent
+                       FROM
+                       (SELECT PARENT_SERVICE, COUNT(Ass_to_parent) AS mycount FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY PARENT_SERVICE) AS frame1,
+                       (SELECT PARENT_SERVICE, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY PARENT_SERVICE) AS frame2
+                       WHERE frame1.PARENT_SERVICE = frame2.PARENT_SERVICE
+                       GROUP BY frame1.PARENT_SERVICE
+                       ORDER BY avg_to_parent DESC")
+from_parent_avg = sqldf("SELECT frame1.PARENT_SERVICE,frame1.mycount*1.0/frame2.mycount AS avg_from_parent
+                       FROM
+                       (SELECT PARENT_SERVICE, COUNT(Ass_from_parent) AS mycount FROM bigframe WHERE Ass_from_parent = 'TRUE' GROUP BY PARENT_SERVICE) AS frame1,
+                       (SELECT PARENT_SERVICE, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY PARENT_SERVICE) AS frame2
+                       WHERE frame1.PARENT_SERVICE = frame2.PARENT_SERVICE
+                       GROUP BY frame1.PARENT_SERVICE
+                       ORDER BY avg_from_parent DESC")
+
+
+to_service_avg = sqldf("SELECT frame1.service,frame1.mycount*1.0/frame2.mycount AS avg_to_service
+                       FROM
+                       (SELECT service, COUNT(Ass_to_service) AS mycount FROM bigframe WHERE Ass_to_service = TRUE GROUP BY service) AS frame1,
+                       (SELECT service, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY service) AS frame2
+                       WHERE frame1.service = frame2.service
+                       GROUP BY frame1.service
+                       ORDER BY avg_to_service DESC")
+from_service_avg = sqldf("SELECT frame1.service,frame1.mycount*1.0/frame2.mycount AS avg_from_service
+                       FROM
+                       (SELECT service, COUNT(Ass_from_service) AS mycount FROM bigframe WHERE Ass_from_service = 'TRUE' GROUP BY service) AS frame1,
+                       (SELECT service, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY service) AS frame2
+                       WHERE frame1.service = frame2.service
+                       GROUP BY frame1.service
+                       ORDER BY avg_from_service DESC")
+
+
+to_group_avg = sqldf("SELECT frame1.assigned_group,frame1.mycount*1.0/frame2.mycount AS avg_to_group
+                       FROM
+                       (SELECT assigned_group, COUNT(Ass_to_group) AS mycount FROM bigframe WHERE Ass_to_group = TRUE GROUP BY assigned_group) AS frame1,
+                       (SELECT assigned_group, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY assigned_group) AS frame2
+                       WHERE frame1.assigned_group = frame2.assigned_group
+                       GROUP BY frame1.assigned_group
+                       ORDER BY avg_to_group DESC")
+from_group_avg = sqldf("SELECT frame1.assigned_group,frame1.mycount*1.0/frame2.mycount AS avg_from_group
+                       FROM
+                       (SELECT assigned_group, COUNT(Ass_from_group) AS mycount FROM bigframe WHERE Ass_from_group = 'TRUE' GROUP BY assigned_group) AS frame1,
+                       (SELECT assigned_group, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY assigned_group) AS frame2
+                       WHERE frame1.assigned_group = frame2.assigned_group
+                       GROUP BY frame1.assigned_group
+                       ORDER BY avg_from_group DESC")
+
+
+parent_reass_by_org_avg = sqldf("SELECT frame1.org_id,frame1.mycount*1.0/frame2.mycount AS avg_to_parent
+                       FROM
+                       (SELECT org_id, COUNT(Ass_to_parent) AS mycount FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY org_id) AS frame1,
+                       (SELECT org_id, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY org_id) AS frame2
+                       WHERE frame1.org_id = frame2.org_id
+                       GROUP BY frame1.org_id
+                       ORDER BY avg_to_parent DESC")
+service_reass_by_org_avg = sqldf("SELECT frame1.org_id,frame1.mycount*1.0/frame2.mycount AS avg_to_service
+                       FROM
+                       (SELECT org_id, COUNT(Ass_to_service) AS mycount FROM bigframe WHERE Ass_to_service = TRUE GROUP BY org_id) AS frame1,
+                       (SELECT org_id, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY org_id) AS frame2
+                       WHERE frame1.org_id = frame2.org_id
+                       GROUP BY frame1.org_id
+                       ORDER BY avg_to_service DESC")
+group_reass_by_org_avg = sqldf("SELECT frame1.org_id,frame1.mycount*1.0/frame2.mycount AS avg_to_group
+                       FROM
+                       (SELECT org_id, COUNT(Ass_to_group) AS mycount FROM bigframe WHERE Ass_to_group = TRUE GROUP BY org_id) AS frame1,
+                       (SELECT org_id, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY org_id) AS frame2
+                       WHERE frame1.org_id = frame2.org_id
+                       GROUP BY frame1.org_id
+                       ORDER BY avg_to_group DESC")
+
+
+parent_reass_by_source_avg = sqldf("SELECT frame1.EXTERNAL_SYSTEM,frame1.mycount*1.0/frame2.mycount AS avg_to_parent
+                       FROM
+                       (SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_parent) AS mycount FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY EXTERNAL_SYSTEM) AS frame1,
+                       (SELECT EXTERNAL_SYSTEM, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY EXTERNAL_SYSTEM) AS frame2
+                       WHERE frame1.EXTERNAL_SYSTEM = frame2.EXTERNAL_SYSTEM
+                       GROUP BY frame1.EXTERNAL_SYSTEM
+                       ORDER BY avg_to_parent DESC")
+service_reass_by_source_avg = sqldf("SELECT frame1.EXTERNAL_SYSTEM,frame1.mycount*1.0/frame2.mycount AS avg_to_service
+                       FROM
+                       (SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_service) AS mycount FROM bigframe WHERE Ass_to_service = TRUE GROUP BY EXTERNAL_SYSTEM) AS frame1,
+                       (SELECT EXTERNAL_SYSTEM, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY EXTERNAL_SYSTEM) AS frame2
+                       WHERE frame1.EXTERNAL_SYSTEM = frame2.EXTERNAL_SYSTEM
+                       GROUP BY frame1.EXTERNAL_SYSTEM
+                       ORDER BY avg_to_service DESC")
+group_reass_by_source_avg = sqldf("SELECT frame1.EXTERNAL_SYSTEM,frame1.mycount*1.0/frame2.mycount AS avg_to_group
+                       FROM
+                       (SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_group) AS mycount FROM bigframe WHERE Ass_to_group = TRUE GROUP BY EXTERNAL_SYSTEM) AS frame1,
+                       (SELECT EXTERNAL_SYSTEM, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY EXTERNAL_SYSTEM) AS frame2
+                       WHERE frame1.EXTERNAL_SYSTEM = frame2.EXTERNAL_SYSTEM
+                       GROUP BY frame1.EXTERNAL_SYSTEM
+                       ORDER BY avg_to_group DESC")
+
+
+
+to_parent_avg
+from_parent_avg
+
+to_service_avg
+from_service_avg
+
+to_group_avg
+from_group_avg
+
+parent_reass_by_org_avg
+service_reass_by_org_avg
+group_reass_by_org_avg
+
+parent_reass_by_source_avg
+service_reass_by_source_avg
+group_reass_by_source_avg
+
+```
+
+
+
+```{r}
+# Bar plots for Number of reassignments by incident for each category
+
+len_to_parent = nrow(to_parent_avg)
+barplot(height = as.matrix( to_parent_avg[2])[1:len_to_parent], names.arg = as.vector(as.matrix(to_parent_avg[1]))[1:len_to_parent],main = "Average number of reassignements to parent service",las = 2)
+len_from_parent = nrow(from_parent_avg)
+barplot(height = as.matrix( from_parent_avg[2])[1:len_from_parent], names.arg = as.vector(as.matrix(from_parent_avg[1]))[1:len_from_parent],main = "Average number of reassignements from parent service",las = 2)
+
+len_to_service = nrow(to_service_avg)
+barplot(height = as.matrix( to_service_avg[2])[1:25], names.arg = as.vector(as.matrix(to_service_avg[1]))[1:25],main = "Average number of reassignements to service",las = 2)
+len_from_service = nrow(from_service_avg)
+barplot(height = as.matrix( from_service_avg[2])[1:25], names.arg = as.vector(as.matrix(from_service_avg[1]))[1:25],main = "Average number of reassignements from service",las = 2)
+
+len_to_group = nrow(to_group_avg)
+barplot(height = as.matrix( to_group_avg[2])[1:25], names.arg = as.vector(as.matrix(to_group_avg[1]))[1:25],main = "Average number of reassignements to assigned group",las = 2)
+len_from_group = nrow(from_group_avg)
+barplot(height = as.matrix( from_group_avg[2])[1:25], names.arg = as.vector(as.matrix(from_group_avg[1]))[1:25],main = "Average number of reassignements from assigned group",las = 2)
+
+len_by_org = nrow(parent_reass_by_org_avg)
+barplot(height = as.matrix( parent_reass_by_org_avg[2])[1:min(c(len_by_org,25))], names.arg = as.vector(as.matrix(parent_reass_by_org_avg[1]))[1:min(c(len_by_org,25))],main = "Average number of parent service reassignements by organization",las = 2)
+len_by_org = nrow(service_reass_by_org_avg)
+barplot(height = as.matrix( service_reass_by_org_avg[2])[1:min(c(len_by_org,25))], names.arg = as.vector(as.matrix(service_reass_by_org_avg[1]))[1:min(c(len_by_org,25))],main = "Average number of service reassignements by organization",las = 2)
+len_by_org = nrow(group_reass_by_org_avg)
+barplot(height = as.matrix( group_reass_by_org_avg[2])[1:min(c(len_by_org,25))], names.arg = as.vector(as.matrix(group_reass_by_org_avg[1]))[1:min(c(len_by_org,25))],main = "Average number of assigned group reassignements by organization",las = 2)
+
+len_by_source = nrow(parent_reass_by_source_avg)
+barplot(height = as.matrix( parent_reass_by_source_avg[2])[1:min(c(len_by_source,25))], names.arg = as.vector(as.matrix(parent_reass_by_source_avg[1]))[1:min(c(len_by_source,25))],main = "Average number of parent service reassignements by external system",las = 2)
+len_by_source = nrow(service_reass_by_source)
+barplot(height = as.matrix( service_reass_by_source_avg[2])[1:min(c(len_by_source,25))], names.arg = as.vector(as.matrix(service_reass_by_source_avg[1]))[1:min(c(len_by_source,25))],main = "Average number of service reassignements by external system",las = 2)
+len_by_source = nrow(group_reass_by_source_avg)
+barplot(height = as.matrix( group_reass_by_source_avg[2])[1:min(c(len_by_source,25))], names.arg = as.vector(as.matrix(group_reass_by_source_avg[1]))[1:min(c(len_by_source,25))],main = "Average number of assigned group reassignements by external system",las = 2)
+```
+
+
+For the External systems: walkup and chat have a high average number of reassignments. Looks like the problem is not understood well when those means are used, or those means are used when the incident is challenging to understand and solve.
+
+For the parent services, services and assigned groups that have high numbers of reassignments (to them or for them), Is it the norm for them?
+
+The organizations 1083 and 1228 have high numbers of reassignments. Why is that?
+
+
+
+
+```{r}
+
+# Average number of reassignements by incident for each category
+to_parent_avg = sqldf("SELECT frame1.PARENT_SERVICE, COUNT(frame1.Ass_to_parent)*1.0/frame2.mycount AS avg_to_parent
+                      FROM bigframe as frame1,(SELECT PARENT_SERVICE, COUNT(DISTINCT ticket_nmbr) AS mycount FROM bigframe GROUP BY PARENT_SERVICE ) AS frame2
+                      WHERE (frame1.Ass_to_parent = TRUE ) AND (frame1.PARENT_SERVICE = frame2.PARENT_SERVICE)
+                      GROUP BY frame1.PARENT_SERVICE 
+                      ORDER BY avg_to_parent DESC")
+
+from_parent_avg = sqldf("SELECT PARENT_SERVICE, COUNT(Ass_from_parent)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_from_parent = 'TRUE' GROUP BY PARENT_SERVICE ORDER BY COUNT(Ass_from_parent)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+
+to_service_avg = sqldf("SELECT service, COUNT(Ass_to_service)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_service = TRUE GROUP BY service ORDER BY COUNT(Ass_to_service)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+from_service_avg = sqldf("SELECT service, COUNT(Ass_from_service)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_from_service = 'TRUE' GROUP BY service ORDER BY COUNT(Ass_from_service)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+
+to_group_avg = sqldf("SELECT assigned_group, COUNT(Ass_to_group)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_group = TRUE GROUP BY assigned_group ORDER BY COUNT(Ass_to_group)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+from_group_avg = sqldf("SELECT assigned_group, COUNT(Ass_from_group)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_from_group = 'TRUE' GROUP BY assigned_group ORDER BY COUNT(Ass_from_group)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+
+parent_reass_by_org_avg = sqldf("SELECT org_id, COUNT(Ass_to_parent)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY org_id ORDER BY COUNT(Ass_to_parent)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+service_reass_by_org_avg = sqldf("SELECT org_id, COUNT(Ass_to_service)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_service = TRUE GROUP BY org_id ORDER BY COUNT(Ass_to_service)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+group_reass_by_org_avg = sqldf("SELECT org_id, COUNT(Ass_to_group)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_group = TRUE GROUP BY org_id ORDER BY COUNT(Ass_to_group)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+
+parent_reass_by_classtr_avg = sqldf("SELECT class_structure, COUNT(Ass_to_parent)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY class_structure ORDER BY COUNT(Ass_to_parent)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+service_reass_by_classtr_avg = sqldf("SELECT class_structure, COUNT(Ass_to_service)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_service = TRUE GROUP BY class_structure ORDER BY COUNT(Ass_to_service)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+group_reass_by_classtr_avg = sqldf("SELECT class_structure, COUNT(Ass_to_group)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_group = TRUE GROUP BY class_structure ORDER BY COUNT(Ass_to_group)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+
+parent_reass_by_source_avg = sqldf("SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_parent)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_parent = TRUE GROUP BY EXTERNAL_SYSTEM ORDER BY COUNT(Ass_to_parent)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+service_reass_by_source_avg = sqldf("SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_service)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_service = TRUE GROUP BY EXTERNAL_SYSTEM ORDER BY COUNT(Ass_to_service)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+group_reass_by_source_avg = sqldf("SELECT EXTERNAL_SYSTEM, COUNT(Ass_to_group)*1.0/COUNT(DISTINCT ticket_nmbr) FROM bigframe WHERE Ass_to_group = TRUE GROUP BY EXTERNAL_SYSTEM ORDER BY COUNT(Ass_to_group)*1.0/COUNT(DISTINCT ticket_nmbr) DESC")
+
+
+
+to_parent_avg
+from_parent_avg
+
+to_service_avg
+from_service_avg
+
+to_group_avg
+from_group_avg
+
+parent_reass_by_org_avg
+service_reass_by_org_avg
+group_reass_by_org_avg
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Average incident business completion hours by organization
+avg_bus_comp <- sqldf("SELECT org_id, AVG(BUSINESS_COMPLETION_HRS) FROM bigframe GROUP BY org_id ORDER BY AVG(BUSINESS_COMPLETION_HRS) DESC")
+avg_bus_comp
+barplot(height = as.matrix( avg_bus_comp[2])[1:25], names.arg = as.vector(as.matrix(avg_bus_comp[1]))[1:25],las = 2)
+```
+
+
+
+
+
+
+
+
